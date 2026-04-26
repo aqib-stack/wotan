@@ -6,7 +6,9 @@
     "start:dev": "nest start --watch",
     "build": "nest build",
     "start": "node dist/main.js",
-    "seed": "ts-node prisma/seed.ts"
+    "seed": "ts-node prisma/seed.ts",
+    "start": "node dist/main.js",
+"start:prod": "node dist/main.js"
   },
   "dependencies": {
     "@nestjs/common": "latest",
