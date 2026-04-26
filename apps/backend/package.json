@@ -1,0 +1,32 @@
+{
+  "name": "wotan-insights-backend",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "start:dev": "nest start --watch",
+    "build": "nest build",
+    "start": "node dist/main.js",
+    "seed": "ts-node prisma/seed.ts"
+  },
+  "dependencies": {
+    "@nestjs/common": "latest",
+    "@nestjs/core": "latest",
+    "@nestjs/platform-express": "^11.1.19",
+    "@prisma/client": "^5.22.0",
+    "class-transformer": "latest",
+    "class-validator": "latest",
+    "multer": "^2.1.1",
+    "reflect-metadata": "latest",
+    "rxjs": "latest"
+  },
+  "devDependencies": {
+    "@nestjs/cli": "latest",
+    "@nestjs/schematics": "latest",
+    "@nestjs/testing": "latest",
+    "@types/multer": "^2.1.0",
+    "@types/node": "^25.6.0",
+    "prisma": "^5.22.0",
+    "ts-node": "latest",
+    "typescript": "latest"
+  }
+}

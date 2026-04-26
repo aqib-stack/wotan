@@ -1,0 +1,78 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id        String   @id @default(cuid())
+  name      String
+  createdAt DateTime @default(now())
+  bets      Bet[]
+}
+
+model BookmakerConnection {
+  id        String   @id @default(cuid())
+  userId    String
+  platform  String
+  tokenHash String?
+  createdAt DateTime @default(now())
+}
+
+model Bet {
+  id        String   @id @default(cuid())
+  userId    String
+  n         Int
+  placedAt  DateTime
+  match     String
+  market    String
+  odds      Float
+  stake     Float
+  currency  String   @default("PKR")
+  result    String
+  flag      String?
+  createdAt DateTime @default(now())
+  user      User     @relation(fields: [userId], references: [id])
+
+  @@index([userId, placedAt])
+}
+
+model InsightReport {
+  id            String   @id @default(cuid())
+  userId        String
+  investorScore Float
+  rating        String
+  totalBets     Int
+  totalStaked   Float
+  totalReturned Float
+  roi           Float
+  winRate       Float
+  createdAt     DateTime @default(now())
+}
+
+model InsightMetricScore {
+  id        String   @id @default(cuid())
+  userId    String
+  code      String
+  title     String
+  score     Float
+  weight    Float
+  summary   String
+  stats     Json
+  createdAt DateTime @default(now())
+}
+
+model TiltEvent {
+  id        String   @id @default(cuid())
+  userId    String
+  title     String
+  subtitle  String
+  startAt   DateTime
+  endAt     DateTime
+  betCount  Int
+  signals   Json
+  createdAt DateTime @default(now())
+}
