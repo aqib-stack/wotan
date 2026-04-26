@@ -8,6 +8,9 @@ async function bootstrap() {
     'http://localhost:3000',
     'https://wotan-itug.vercel.app',
   ],
+  methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization'],
+  credentials: true,
 });
   const port = Number(process.env.PORT || 4000);
   await app.listen(port);
