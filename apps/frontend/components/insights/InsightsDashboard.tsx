@@ -88,7 +88,7 @@ setTilt(tiltRes as any);
       setUploadMessage(data.message || `Imported ${data.imported} Stake bets`);
       await load();
       const betRes = await apiGet(`/insights/bets?filter=${filter}`);
-      setBets(betRes);
+      setBets(betRes as BetRes);
     } catch (err: any) {
       setUploadMessage(`Upload failed: ${err?.message || 'Unknown error'}`);
     } finally {
