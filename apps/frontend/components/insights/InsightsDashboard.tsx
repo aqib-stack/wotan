@@ -50,11 +50,11 @@ export default function InsightsDashboard() {
       apiGet('/insights/tilt-events'),
     ]);
 
-    setSummary(summaryRes);
-    setMetrics(metricsRes);
-    setHeat(heatRes);
-    setStreak(Array.isArray(streakRes) ? { rows: streakRes, stats: {} } : streakRes);
-    setTilt(tiltRes);
+    setSummary(summaryRes as any);
+setMetrics(metricsRes as any[]);
+setHeat(heatRes as any);
+setStreak(Array.isArray(streakRes) ? { rows: streakRes, stats: {} } : (streakRes as any));
+setTilt(tiltRes as any);
   };
 
   useEffect(() => {
