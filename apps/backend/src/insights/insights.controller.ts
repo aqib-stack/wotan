@@ -47,7 +47,13 @@ export class InsightsController {
   }
 
   @Post('import/stake-json')
-  @UseInterceptors(FilesInterceptor('files'))
+  @UseInterceptors(
+  FilesInterceptor('files', 10, {
+    limits: {
+      fileSize: 50 * 1024 * 1024,
+    },
+  }),
+)
   importStakeJson(@UploadedFiles() files: any[]) {
     if (!files || files.length === 0) {
       throw new BadRequestException(
