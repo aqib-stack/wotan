@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { apiGet } from '@/lib/api';
+const API = process.env.NEXT_PUBLIC_API_URL;
 
 type Summary = any;
 type Metric = any;
@@ -77,10 +78,10 @@ setTilt(tiltRes as any);
     });
 
     try {
-      const res = await fetch('http://localhost:4000/insights/import/stake-json', {
-        method: 'POST',
-        body: formData,
-      });
+      const res = await fetch(`${API}/insights/import/stake-json`, {
+  method: 'POST',
+  body: formData,
+});
 
       const data = await res.json();
       if (!res.ok) throw new Error(data?.message || 'Upload failed');
