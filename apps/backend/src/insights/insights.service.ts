@@ -10,10 +10,32 @@ type BetLike = {
   market: string;
   odds: number;
   stake: number;
-  currency: string;
   result: string;
   flag: string | null;
 };
+
+type StakeMetadata = {
+  fixtureNameById: Record<string, string>;
+  marketNameById: Record<string, string>;
+  outcomeNameById: Record<string, string>;
+  byBetId: Record<
+    string,
+    {
+      match?: string;
+      market?: string;
+      selection?: string;
+    }
+  >;
+};
+
+function emptyStakeMetadata(): StakeMetadata {
+  return {
+    fixtureNameById: {},
+    marketNameById: {},
+    outcomeNameById: {},
+    byBetId: {},
+  };
+}
 
 @Injectable()
 export class InsightsService {
@@ -45,19 +67,6 @@ export class InsightsService {
     const staked = bets.reduce((sum, b) => sum + b.stake, 0);
     const returned = bets.reduce((sum, b) => sum + this.resultReturn(b), 0);
     return staked ? Number((((returned - staked) / staked) * 100).toFixed(1)) : 0;
-  }
-
-  private currencyOfBets(bets: Array<{ currency?: string }>) {
-    return String(bets[0]?.currency || 'PKR').toUpperCase();
-  }
-
-  private currencySymbol(currency?: string) {
-    switch (String(currency || '').toUpperCase()) {
-      case 'PKR': return '₨';
-      case 'EUR': return '€';
-      case 'USD': return '$';
-      default: return String(currency || '');
-    }
   }
 
   private rating(score: number | null, count: number) {
@@ -109,7 +118,6 @@ export class InsightsService {
       confidence: this.confidence(totalBets),
       minimumBetsRequired: 50,
       totalBets,
-      currency: this.currencyOfBets(bets),
       totalStaked: Number(totalStaked.toFixed(2)),
       totalReturned: Number(totalReturned.toFixed(2)),
       roi: Number(roi.toFixed(1)),
@@ -190,7 +198,6 @@ export class InsightsService {
     return {
       rows: bets,
       count: bets.length,
-      currency: this.currencyOfBets(bets),
       totalStaked: Number(totalStaked.toFixed(2)),
       totalReturned: Number(totalReturned.toFixed(2)),
     };
@@ -221,7 +228,7 @@ export class InsightsService {
   async getStreak() {
     const bets = await this.allBets();
     return {
-      rows: bets.map((b) => ({ n: b.n, stake: b.stake, currency: b.currency, result: b.result, flag: b.flag })),
+      rows: bets.map((b) => ({ n: b.n, stake: b.stake, result: b.result, flag: b.flag })),
       stats: this.streakStats(bets),
     };
   }
@@ -231,18 +238,55 @@ export class InsightsService {
     return this.buildTiltEvents(bets);
   }
 
-  async importStakeJsonFiles(files: any[]) {
+  async importStakeLive(stakeToken: string, maxBets = 500) {
+    const token = stakeToken?.trim();
+    if (!token) {
+      throw new BadRequestException('Stake x-access-token is required to fetch live Stake bet history.');
+    }
+
     const user = await this.user();
+    const entries = await this.fetchStakeSportBetEntries(token, maxBets);
+
     await this.prisma.bet.deleteMany({ where: { userId: user.id } });
 
     let imported = 0;
     let skipped = 0;
 
-    for (const file of files) {
-      const raw = file.buffer.toString('utf8');
-      const result = await this.importStakeJson(raw, false);
-      imported += result.imported || 0;
-      skipped += result.skipped || 0;
+    const rows = this.stakeSportBetEntriesToRows(entries).sort(
+      (a, b) => a.placedAt.getTime() - b.placedAt.getTime(),
+    );
+
+    for (const row of rows) {
+      if (
+        !row.match ||
+        row.match.startsWith('Stake fixture') ||
+        !row.market ||
+        row.market.startsWith('Market ') ||
+        !Number.isFinite(row.stake) ||
+        row.stake <= 0 ||
+        !Number.isFinite(row.odds) ||
+        Number.isNaN(row.placedAt.getTime())
+      ) {
+        skipped++;
+        continue;
+      }
+
+      await this.prisma.bet.create({
+        data: {
+          userId: user.id,
+          n: 0,
+          placedAt: row.placedAt,
+          match: row.match,
+          market: row.market,
+          odds: row.odds,
+          stake: row.stake,
+          currency: row.currency,
+          result: row.result,
+          flag: null,
+        },
+      });
+
+      imported++;
     }
 
     await this.renumberBets(user.id);
@@ -250,14 +294,57 @@ export class InsightsService {
 
     return {
       success: true,
-      files: files.length,
       imported,
       skipped,
-      message: `Imported ${imported} Stake bet${imported === 1 ? '' : 's'} from ${files.length} file${files.length === 1 ? '' : 's'}. Skipped ${skipped} duplicate/invalid record${skipped === 1 ? '' : 's'}.`,
+      fetched: entries.length,
+      message: `Fetched ${entries.length} Stake bet${entries.length === 1 ? '' : 's'} and imported ${imported}. Skipped ${skipped} incomplete/unsupported record${skipped === 1 ? '' : 's'}.`,
     };
   }
 
-  async importStakeJson(rawJson: string, clearExisting = true) {
+  async importStakeJsonFiles(files: any[], stakeToken?: string) {
+    const user = await this.user();
+
+    const rawFiles = files.map((file) => file.buffer.toString('utf8'));
+    const fixtureIds = this.extractStakeFixtureIds(rawFiles);
+
+    const metadata = stakeToken?.trim()
+      ? await this.fetchStakeMetadata(stakeToken.trim(), fixtureIds).catch((error) => {
+          console.warn('Stake metadata enrichment failed:', error?.message || error);
+          return emptyStakeMetadata();
+        })
+      : emptyStakeMetadata();
+
+    await this.prisma.bet.deleteMany({ where: { userId: user.id } });
+
+    let imported = 0;
+    let skipped = 0;
+
+    for (const raw of rawFiles) {
+      const result = await this.importStakeJson(raw, false, metadata);
+      imported += result.imported || 0;
+      skipped += result.skipped || 0;
+    }
+
+    await this.renumberBets(user.id);
+    await this.detectAndStoreTiltFlags(user.id);
+
+    const enrichedCount =
+      Object.keys(metadata.fixtureNameById).length +
+      Object.keys(metadata.marketNameById).length +
+      Object.keys(metadata.outcomeNameById).length;
+
+    return {
+      success: true,
+      files: files.length,
+      imported,
+      skipped,
+      enriched: enrichedCount > 0,
+      fixtureIdsFound: fixtureIds.length,
+      message: `Imported ${imported} Stake bet${imported === 1 ? '' : 's'} from ${files.length} file${files.length === 1 ? '' : 's'}. Skipped ${skipped} duplicate/invalid record${skipped === 1 ? '' : 's'}.${enrichedCount > 0 ? ' Fixture, market and selection names were enriched from Stake.' : stakeToken?.trim() ? ' Stake token was received, but no matching fixture/market names were returned by Stake.' : ''}`,
+    };
+  }
+
+  async importStakeJson(rawJson: string, clearExisting = true, metadata: StakeMetadata = emptyStakeMetadata()) {
     let records: any[];
 
     try {
@@ -297,7 +384,6 @@ export class InsightsService {
       const stake = Number(data.amount || 0);
       const payout = Number(data.payout || 0);
       const odds = Number(outcome?.odds || data.potentialMultiplier || 1);
-      const currency = String(data.currency || 'PKR').toUpperCase();
       const placedAt = new Date(data.createdAt || item.created_at);
 
       if (!Number.isFinite(stake) || stake <= 0 || !Number.isFinite(odds) || Number.isNaN(placedAt.getTime())) {
@@ -305,8 +391,9 @@ export class InsightsService {
         continue;
       }
 
-      const match = this.stakeMatchLabel(outcome);
-      const market = this.stakeMarketLabel(outcome);
+      const resolved = this.resolveStakeLabels(data, outcome, metadata);
+      const match = resolved.match;
+      const market = resolved.market;
       const result = payout > stake ? 'W' : 'L';
 
       const duplicate = await this.prisma.bet.findFirst({
@@ -317,7 +404,6 @@ export class InsightsService {
           market,
           odds,
           stake,
-          currency,
         },
       });
 
@@ -335,7 +421,7 @@ export class InsightsService {
           market,
           odds,
           stake,
-          currency,
+          currency: String(data.currency || 'PKR').toUpperCase(),
           result,
           flag: null,
         },
@@ -594,8 +680,8 @@ export class InsightsService {
         signals: [
           ['Session bets', `${session.length} bet${session.length === 1 ? '' : 's'}`, true],
           ['Loss count', `${losses} of ${session.length}`, losses > 0],
-          ['Average stake', `${this.currencySymbol(first.currency)}${avgStake.toFixed(2)}`, true],
-          ['Session stake', `${this.currencySymbol(first.currency)}${totalStake.toFixed(2)}`, true],
+          ['Average stake', `€${avgStake.toFixed(2)}`, true],
+          ['Session stake', `€${totalStake.toFixed(2)}`, true],
           ['Time window', `${this.timeLabel(first.placedAt)} – ${this.timeLabel(last.placedAt)}`, true],
           ['Result', losses === session.length ? 'All losses' : 'Mixed results', losses === session.length],
         ],
@@ -650,6 +736,367 @@ export class InsightsService {
 
   private timeLabel(date: Date) {
     return date.toLocaleString('en-GB', { hour: '2-digit', minute: '2-digit', hour12: false });
+  }
+
+  private extractStakeFixtureIds(rawFiles: string[]) {
+    const fixtureIds = new Set<string>();
+
+    for (const raw of rawFiles) {
+      try {
+        const records = JSON.parse(raw);
+        if (!Array.isArray(records)) continue;
+
+        for (const item of records) {
+          const outcomes = item?.data?.outcomes;
+          if (!Array.isArray(outcomes)) continue;
+
+          for (const outcome of outcomes) {
+            const fixtureId = outcome?.fixtureId || outcome?.fixture?.id;
+            if (fixtureId) fixtureIds.add(String(fixtureId));
+          }
+        }
+      } catch {
+        // Invalid JSON is handled later by importStakeJson().
+      }
+    }
+
+    return Array.from(fixtureIds);
+  }
+
+  private async fetchStakeSportBetEntries(stakeToken: string, maxBets = 500) {
+    // Same data source as Stake > My Bets > Sports.
+    // This endpoint needs a Stake x-access-token, but no JSON upload is needed.
+    const query = `
+      query SportSportList($limit: Int!, $offset: Int!) {
+        user {
+          id
+          name
+          sportBetList(limit: $limit, offset: $offset) {
+            id
+            iid
+            bet {
+              __typename
+              ... on SportBet {
+                id
+                amount
+                currency
+                status
+                payout
+                createdAt
+                updatedAt
+                potentialMultiplier
+                bet { iid }
+                outcomes {
+                  id
+                  odds
+                  status
+                  outcome { id name odds }
+                  market { id name status provider }
+                  fixture {
+                    id
+                    name
+                    status
+                    provider
+                    tournament { name slug category { name slug sport { name slug } } }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    `;
+
+    const entries: any[] = [];
+    const pageSize = 50;
+    const safeMax = Math.max(1, Math.min(Number(maxBets) || 500, 1000));
+
+    for (let offset = 0; offset < safeMax; offset += pageSize) {
+      const json: any = await this.stakeGraphql(stakeToken, {
+        operationName: 'SportSportList',
+        query,
+        variables: { limit: Math.min(pageSize, safeMax - offset), offset },
+      });
+
+      const list = json?.data?.user?.sportBetList || [];
+      if (!list.length) break;
+
+      entries.push(...list);
+      if (list.length < pageSize || entries.length >= safeMax) break;
+    }
+
+    return entries.slice(0, safeMax);
+  }
+
+  private stakeSportBetEntriesToRows(entries: any[]) {
+    const rows: Array<{
+      placedAt: Date;
+      match: string;
+      market: string;
+      odds: number;
+      stake: number;
+      currency: string;
+      result: string;
+    }> = [];
+
+    for (const entry of entries) {
+      const bet = entry?.bet;
+      if (!bet || bet.__typename !== 'SportBet') continue;
+
+      const outcomes = Array.isArray(bet.outcomes) ? bet.outcomes : [];
+      if (!outcomes.length) continue;
+
+      const placedAt = new Date(bet.createdAt);
+      const stake = Number(bet.amount || 0);
+      const payout = Number(bet.payout || 0);
+      const currency = String(bet.currency || 'PKR').toUpperCase();
+      const fallbackResult = payout > stake ? 'W' : 'L';
+
+      for (const outcome of outcomes) {
+        const fixture = outcome?.fixture;
+        const market = outcome?.market;
+        const selection = outcome?.outcome;
+        const odds = Number(outcome?.odds || bet.potentialMultiplier || selection?.odds || 1);
+
+        rows.push({
+          placedAt,
+          match: fixture?.name || `Stake fixture ${fixture?.id || 'Unknown'}`,
+          market: selection?.name
+            ? `${market?.name || 'Sportsbook'} · ${selection.name}`
+            : market?.name || 'Sportsbook',
+          odds,
+          stake,
+          currency,
+          result: outcome?.status === 'won' ? 'W' : outcome?.status === 'lost' ? 'L' : fallbackResult,
+        });
+      }
+    }
+
+    return rows;
+  }
+
+  private async fetchStakeMetadata(stakeToken: string, fixtureIds: string[] = []): Promise<StakeMetadata> {
+    const metadata = emptyStakeMetadata();
+
+    await this.fetchStakeUserBetListMetadata(stakeToken, metadata);
+
+    const missingFixtureIds = fixtureIds.filter((fixtureId) => !metadata.fixtureNameById[fixtureId]);
+    for (const fixtureId of missingFixtureIds) {
+      await this.fetchStakeFixtureMetadata(stakeToken, fixtureId, metadata).catch((error) => {
+        console.warn(`Stake fixture enrichment failed for ${fixtureId}:`, error?.message || error);
+      });
+    }
+
+    return metadata;
+  }
+
+  private async fetchStakeUserBetListMetadata(stakeToken: string, metadata: StakeMetadata) {
+    // Same data source as Stake > My Bets > Sports.
+    // Keep this query simple: no status enum and no SportsbookXMultiBet union fields.
+    // Your normal archive records are SportBet records, and these fields return
+    // readable fixture, market and selection names.
+    const query = `
+      query SportSportList($limit: Int!, $offset: Int!) {
+        user {
+          id
+          name
+          sportBetList(limit: $limit, offset: $offset) {
+            id
+            iid
+            bet {
+              __typename
+              ... on SportBet {
+                id
+                amount
+                currency
+                status
+                payout
+                createdAt
+                updatedAt
+                potentialMultiplier
+                bet { iid }
+                outcomes {
+                  id
+                  odds
+                  status
+                  outcome { id name odds }
+                  market { id name status provider }
+                  fixture {
+                    id
+                    name
+                    status
+                    provider
+                    tournament { name slug category { name slug sport { name slug } } }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    `;
+
+    let loaded = 0;
+
+    for (let offset = 0; offset < 500; offset += 50) {
+      const json: any = await this.stakeGraphql(stakeToken, {
+        operationName: 'SportSportList',
+        query,
+        variables: { limit: 50, offset },
+      });
+
+      const list = json?.data?.user?.sportBetList || [];
+      if (!list.length) break;
+
+      loaded += list.length;
+
+      for (const entry of list) {
+        const bet = entry?.bet || {};
+        const betIds = [entry?.id, entry?.iid, bet?.id, bet?.bet?.iid].filter(Boolean).map(String);
+        const outcomes = Array.isArray(bet?.outcomes) ? bet.outcomes : [];
+
+        for (const o of outcomes) {
+          this.addStakeMetadata(metadata, o?.fixture, o?.market, o?.outcome, betIds);
+        }
+      }
+
+      if (list.length < 50) break;
+    }
+
+    console.log('Stake sportBetList metadata loaded:', {
+      betsChecked: loaded,
+      fixtures: Object.keys(metadata.fixtureNameById).length,
+      markets: Object.keys(metadata.marketNameById).length,
+      outcomes: Object.keys(metadata.outcomeNameById).length,
+      betIds: Object.keys(metadata.byBetId).length,
+    });
+  }
+
+  private async fetchStakeFixtureMetadata(stakeToken: string, fixtureId: string, metadata: StakeMetadata) {
+    const query = `
+      query Fixture($id: String!) {
+        fixture(id: $id) {
+          id
+          name
+          tournament {
+            name
+            category { name sport { name slug } }
+          }
+          markets {
+            id
+            name
+            outcomes { id name odds }
+          }
+        }
+      }
+    `;
+
+    const json = await this.stakeGraphql(stakeToken, {
+      operationName: 'Fixture',
+      query,
+      variables: { id: fixtureId },
+    });
+
+    const fixture = json?.data?.fixture;
+    if (!fixture?.id) return;
+
+    if (fixture.name) metadata.fixtureNameById[String(fixture.id)] = fixture.name;
+
+    const markets = Array.isArray(fixture.markets) ? fixture.markets : [];
+    for (const market of markets) {
+      if (market?.id && market?.name) metadata.marketNameById[String(market.id)] = market.name;
+
+      const outcomes = Array.isArray(market?.outcomes) ? market.outcomes : [];
+      for (const outcome of outcomes) {
+        if (outcome?.id && outcome?.name) metadata.outcomeNameById[String(outcome.id)] = outcome.name;
+      }
+    }
+  }
+
+  private async stakeGraphql(stakeToken: string, body: any) {
+    const cleanToken = stakeToken.replace(/^Bearer\s+/i, '').trim();
+
+    const response = await fetch('https://stake.com/_api/graphql', {
+      method: 'POST',
+      headers: {
+        accept: '*/*',
+        'accept-language': 'en-US,en;q=0.9',
+        'content-type': 'application/json',
+        origin: 'https://stake.com',
+        referer: 'https://stake.com/my-bets/sports/settled',
+        'user-agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome Safari/537.36',
+        'x-access-token': cleanToken,
+        authorization: `Bearer ${cleanToken}`,
+        'x-language': 'en',
+      },
+      body: JSON.stringify(body),
+    });
+
+    const text = await response.text();
+    let json: any;
+
+    try {
+      json = text ? JSON.parse(text) : {};
+    } catch {
+      json = { raw: text };
+    }
+
+    if (!response.ok) {
+      console.warn('Stake GraphQL HTTP error:', response.status, JSON.stringify(json).slice(0, 1000));
+      throw new BadRequestException(`Stake metadata request failed with status ${response.status}`);
+    }
+
+    if (json?.errors?.length) {
+      console.warn('Stake GraphQL errors:', JSON.stringify(json.errors, null, 2));
+      throw new BadRequestException(json.errors[0]?.message || 'Stake metadata request failed.');
+    }
+
+    return json;
+  }
+
+  private addStakeMetadata(metadata: StakeMetadata, fixture: any, market: any, outcome: any, betIds: string[] = []) {
+    if (fixture?.id && fixture?.name) metadata.fixtureNameById[String(fixture.id)] = String(fixture.name);
+    if (market?.id && market?.name) metadata.marketNameById[String(market.id)] = String(market.name);
+    if (outcome?.id && outcome?.name) metadata.outcomeNameById[String(outcome.id)] = String(outcome.name);
+
+    const readable = {
+      match: fixture?.name ? String(fixture.name) : undefined,
+      market: market?.name ? String(market.name) : undefined,
+      selection: outcome?.name ? String(outcome.name) : undefined,
+    };
+
+    for (const id of betIds) {
+      if (!id) continue;
+      metadata.byBetId[String(id)] = { ...metadata.byBetId[String(id)], ...readable };
+    }
+  }
+
+  private resolveStakeLabels(data: any, outcome: any, metadata: StakeMetadata) {
+    const betMeta = metadata.byBetId[data?.id] || metadata.byBetId[data?.iid] || {};
+    const fixtureId = outcome?.fixtureId || outcome?.fixture?.id;
+    const marketId = outcome?.marketId || outcome?.market?.id;
+    const outcomeId = outcome?.outcomeId || outcome?.outcome?.id;
+
+    const match =
+      betMeta.match ||
+      (fixtureId ? metadata.fixtureNameById[fixtureId] : undefined) ||
+      this.stakeMatchLabel(outcome);
+
+    const marketName =
+      betMeta.market ||
+      (marketId ? metadata.marketNameById[marketId] : undefined) ||
+      this.stakeMarketLabel(outcome);
+
+    const selection =
+      betMeta.selection ||
+      (outcomeId ? metadata.outcomeNameById[outcomeId] : undefined) ||
+      outcome?.outcomeName ||
+      outcome?.outcome?.name;
+
+    return {
+      match,
+      market: selection ? `${marketName} · ${selection}` : marketName,
+    };
   }
 
   private stakeMatchLabel(outcome: any) {

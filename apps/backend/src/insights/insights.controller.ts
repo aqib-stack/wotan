@@ -6,6 +6,7 @@ import {
   UploadedFiles,
   UseInterceptors,
   BadRequestException,
+  Body,
 } from '@nestjs/common';
 import { FilesInterceptor } from '@nestjs/platform-express';
 import { InsightsService } from './insights.service';
@@ -48,19 +49,36 @@ export class InsightsController {
 
   @Post('import/stake-json')
   @UseInterceptors(
-  FilesInterceptor('files', 10, {
-    limits: {
-      fileSize: 50 * 1024 * 1024,
-    },
-  }),
-)
-  importStakeJson(@UploadedFiles() files: any[]) {
+    FilesInterceptor('files', 10, {
+      limits: {
+        fileSize: 50 * 1024 * 1024,
+      },
+    }),
+  )
+  importStakeJson(
+    @UploadedFiles() files: any[],
+    @Body('stakeToken') stakeToken?: string,
+  ) {
     if (!files || files.length === 0) {
       throw new BadRequestException(
         'At least one Stake archive JSON file is required.',
       );
     }
 
-    return this.insights.importStakeJsonFiles(files);
+    return this.insights.importStakeJsonFiles(files, stakeToken);
+  }
+
+  @Post('import/stake-live')
+  importStakeLive(
+    @Body('stakeToken') stakeToken?: string,
+    @Body('maxBets') maxBets?: number,
+  ) {
+    if (!stakeToken?.trim()) {
+      throw new BadRequestException(
+        'Stake x-access-token is required. Connect Stake once, then use auto-sync.',
+      );
+    }
+
+    return this.insights.importStakeLive(stakeToken, Number(maxBets) || 500);
   }
 }
