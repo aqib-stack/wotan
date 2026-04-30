@@ -132,6 +132,96 @@ export default function InsightsDashboard() {
     }
   }
 
+  async function fetchStakeSportBetListFromBrowser(token: string, maxBets = 500) {
+    const query = `
+      query SportSportList($limit: Int!, $offset: Int!) {
+        user {
+          id
+          name
+          sportBetList(limit: $limit, offset: $offset) {
+            id
+            iid
+            bet {
+              __typename
+              ... on SportBet {
+                id
+                amount
+                currency
+                status
+                payout
+                createdAt
+                updatedAt
+                potentialMultiplier
+                bet { iid }
+                outcomes {
+                  id
+                  odds
+                  status
+                  outcome { id name odds }
+                  market { id name status provider }
+                  fixture {
+                    id
+                    name
+                    status
+                    provider
+                    tournament { name slug category { name slug sport { name slug } } }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    `;
+
+    const cleanToken = token.replace(/^Bearer\s+/i, '').trim();
+    const entries: any[] = [];
+    const pageSize = 50;
+    const safeMax = Math.max(1, Math.min(Number(maxBets) || 500, 1000));
+
+    for (let offset = 0; offset < safeMax; offset += pageSize) {
+      const response = await fetch('https://stake.com/_api/graphql', {
+        method: 'POST',
+        headers: {
+          accept: '*/*',
+          'content-type': 'application/json',
+          'x-access-token': cleanToken,
+          'x-language': 'en',
+        },
+        body: JSON.stringify({
+          operationName: 'SportSportList',
+          query,
+          variables: { limit: Math.min(pageSize, safeMax - offset), offset },
+        }),
+      });
+
+      const text = await response.text();
+      let json: any = {};
+
+      try {
+        json = text ? JSON.parse(text) : {};
+      } catch {
+        json = { raw: text };
+      }
+
+      if (!response.ok) {
+        throw new Error(`Stake browser request failed with status ${response.status}`);
+      }
+
+      if (json?.errors?.length) {
+        throw new Error(json.errors[0]?.message || 'Stake returned a GraphQL error.');
+      }
+
+      const list = json?.data?.user?.sportBetList || [];
+      if (!list.length) break;
+
+      entries.push(...list);
+      if (list.length < pageSize || entries.length >= safeMax) break;
+    }
+
+    return entries.slice(0, safeMax);
+  }
+
   async function handleStakeLiveSync() {
     const token = stakeToken.trim() || window.localStorage.getItem('wotanStakeToken') || '';
 
@@ -141,13 +231,17 @@ export default function InsightsDashboard() {
     }
 
     setStakeSyncing(true);
-    setUploadMessage('Fetching Stake sports bet history directly from Stake...');
+    setUploadMessage('Fetching Stake sports bet history from this browser...');
 
     try {
       window.localStorage.setItem('wotanStakeToken', token);
-      const data = await apiPostJson<any>('/insights/import/stake-live', {
-        stakeToken: token,
-        maxBets: 500,
+
+      // Important: fetch from the user browser, not from Render.
+      // This avoids Stake rejecting datacenter/server IP requests with 403.
+      const entries = await fetchStakeSportBetListFromBrowser(token, 500);
+
+      const data = await apiPostJson<any>('/insights/import/stake-browser', {
+        entries,
       });
 
       setUploadMessage(data.message || `Fetched and imported ${data.imported} Stake bets`);

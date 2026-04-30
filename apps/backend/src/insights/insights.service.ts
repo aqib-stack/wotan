@@ -301,6 +301,65 @@ export class InsightsService {
     };
   }
 
+  async importStakeBrowserEntries(entries: any[]) {
+    if (!Array.isArray(entries)) {
+      throw new BadRequestException('Stake browser sync payload must include an entries array.');
+    }
+
+    const user = await this.user();
+    await this.prisma.bet.deleteMany({ where: { userId: user.id } });
+
+    let imported = 0;
+    let skipped = 0;
+
+    const rows = this.stakeSportBetEntriesToRows(entries).sort(
+      (a, b) => a.placedAt.getTime() - b.placedAt.getTime(),
+    );
+
+    for (const row of rows) {
+      if (
+        !row.match ||
+        row.match.startsWith('Stake fixture') ||
+        !row.market ||
+        row.market.startsWith('Market ') ||
+        !Number.isFinite(row.stake) ||
+        row.stake <= 0 ||
+        !Number.isFinite(row.odds) ||
+        Number.isNaN(row.placedAt.getTime())
+      ) {
+        skipped++;
+        continue;
+      }
+
+      await this.prisma.bet.create({
+        data: {
+          userId: user.id,
+          n: 0,
+          placedAt: row.placedAt,
+          match: row.match,
+          market: row.market,
+          odds: row.odds,
+          stake: row.stake,
+          currency: row.currency,
+          result: row.result,
+          flag: null,
+        },
+      });
+
+      imported++;
+    }
+
+    await this.renumberBets(user.id);
+    await this.detectAndStoreTiltFlags(user.id);
+
+    return {
+      success: true,
+      imported,
+      skipped,
+      fetched: entries.length,
+      message: `Fetched ${entries.length} Stake bet${entries.length === 1 ? '' : 's'} from browser and imported ${imported}. Skipped ${skipped} incomplete/unsupported record${skipped === 1 ? '' : 's'}.`,
+    };
+  }
   async importStakeJsonFiles(files: any[], stakeToken?: string) {
     const user = await this.user();
 

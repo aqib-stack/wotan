@@ -68,6 +68,16 @@ export class InsightsController {
     return this.insights.importStakeJsonFiles(files, stakeToken);
   }
 
+
+  @Post('import/stake-browser')
+  importStakeBrowser(@Body('entries') entries?: any[]) {
+    if (!Array.isArray(entries)) {
+      throw new BadRequestException('Stake browser sync payload must include an entries array.');
+    }
+
+    return this.insights.importStakeBrowserEntries(entries);
+  }
+
   @Post('import/stake-live')
   importStakeLive(
     @Body('stakeToken') stakeToken?: string,
