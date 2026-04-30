@@ -223,51 +223,74 @@ function Header({ summary }: any) {
 
 function StakeUpload({ onUpload, onStakeSync, uploading, stakeSyncing, message, stakeToken, setStakeToken }: any) {
   const busy = uploading || stakeSyncing;
+  const hasToken = Boolean(stakeToken?.trim());
+  const isError = message?.toLowerCase?.().includes('failed') || message?.toLowerCase?.().includes('required') || message?.toLowerCase?.().includes('missing');
 
   return (
-    <div className="mb-6 rounded-lg border border-[#D8D4CC] bg-white p-5">
-      <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-        <div>
-          <div className="font-semibold">Connect Stake & import real history</div>
-          <div className="text-sm text-[#6B6560]">
+    <div className="mb-6 overflow-hidden rounded-2xl border border-[#D8D4CC] bg-white shadow-[0_18px_50px_rgba(26,26,26,0.06)]">
+      <div className="flex flex-col gap-6 p-6 lg:flex-row lg:items-center lg:justify-between">
+        <div className="max-w-3xl">
+          <div className="mb-2 flex flex-wrap items-center gap-2">
+            <div className="text-lg font-bold tracking-tight text-[#1A1A1A]">Connect Stake & import real history</div>
+            <span className={`rounded-full px-3 py-1 font-mono text-[9px] uppercase tracking-[0.12em] ${hasToken ? 'bg-[#E7F4EC] text-[#1A7A52]' : 'bg-[#F5ECD8] text-[#7A4E10]'}`}>
+              {hasToken ? 'Token saved' : 'One-time setup'}
+            </span>
+          </div>
+          <div className="text-sm leading-6 text-[#6B6560]">
             Fetch settled sports bets directly from Stake. Paste the x-access-token once; it is saved in this browser so future syncs do not need manual entry. JSON upload stays available as backup.
           </div>
-          {message && <div className={`mt-2 font-mono text-[10px] ${message.includes('failed') || message.includes('required') ? 'text-[#8A2818]' : 'text-[#7A4E10]'}`}>{message}</div>}
+          {message && (
+            <div className={`mt-3 rounded-lg border px-3 py-2 font-mono text-[10px] leading-5 ${isError ? 'border-[#E9C4BA] bg-[#F9EAE6] text-[#8A2818]' : 'border-[#ECDDBE] bg-[#FFF8E9] text-[#7A4E10]'}`}>
+              {message}
+            </div>
+          )}
         </div>
 
-        <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
-          <input
-            type="password"
-            value={stakeToken}
-            onChange={(e) => setStakeToken(e.target.value)}
-            placeholder="Stake x-access-token"
-            disabled={busy}
-            className="w-full rounded border border-[#D8D4CC] bg-[#F5F3EE] px-3 py-2 text-sm outline-none focus:border-[#1A1A1A] sm:w-[260px]"
-          />
+        <div className="flex w-full flex-col gap-3 lg:w-auto lg:min-w-[560px]">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-stretch">
+            <div className="relative flex-1">
+              <input
+                type="password"
+                value={stakeToken}
+                onChange={(e) => setStakeToken(e.target.value)}
+                placeholder="Stake x-access-token"
+                disabled={busy}
+                className="h-12 w-full rounded-xl border border-[#D8D4CC] bg-[#F8F6F1] px-4 pr-24 text-sm text-[#1A1A1A] outline-none transition placeholder:text-[#9A948C] focus:border-[#1A1A1A] focus:bg-white disabled:cursor-not-allowed disabled:opacity-60"
+              />
+              <span className={`pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 rounded-full px-2 py-1 font-mono text-[9px] uppercase ${hasToken ? 'bg-[#E7F4EC] text-[#1A7A52]' : 'bg-[#EDEAE4] text-[#6B6560]'}`}>
+                {hasToken ? 'Ready' : 'Required'}
+              </span>
+            </div>
 
-          <button
-            type="button"
-            onClick={onStakeSync}
-            disabled={busy}
-            className={`rounded px-4 py-2 text-sm text-white ${busy ? 'bg-[#6B6560]' : 'bg-[#1A1A1A]'}`}
-          >
-            {stakeSyncing ? 'Fetching...' : 'Fetch Stake Bets'}
-          </button>
-
-          <label className={`cursor-pointer rounded border border-[#D8D4CC] px-4 py-2 text-sm ${busy ? 'bg-[#EDEAE4] text-[#6B6560]' : 'bg-white text-[#1A1A1A]'}`}>
-            {uploading ? 'Importing...' : 'Upload JSON Backup'}
-            <input
-              type="file"
-              accept=".json,application/json"
-              multiple
-              className="hidden"
+            <button
+              type="button"
+              onClick={onStakeSync}
               disabled={busy}
-              onChange={(e) => {
-                onUpload(e.target.files);
-                e.currentTarget.value = '';
-              }}
-            />
-          </label>
+              className="h-12 rounded-xl bg-[#1A1A1A] px-6 text-sm font-bold text-white shadow-sm transition hover:-translate-y-0.5 hover:bg-[#2B2B2B] hover:shadow-md disabled:translate-y-0 disabled:cursor-not-allowed disabled:bg-[#6B6560] disabled:shadow-none"
+            >
+              {stakeSyncing ? 'Fetching...' : 'Fetch Stake Bets'}
+            </button>
+
+            <label className={`flex h-12 cursor-pointer items-center justify-center rounded-xl border px-6 text-sm font-bold transition ${busy ? 'border-[#D8D4CC] bg-[#EDEAE4] text-[#6B6560]' : 'border-[#D8D4CC] bg-white text-[#1A1A1A] hover:-translate-y-0.5 hover:border-[#1A1A1A] hover:bg-[#F8F6F1]'}`}>
+              {uploading ? 'Importing...' : 'Upload JSON Backup'}
+              <input
+                type="file"
+                accept=".json,application/json"
+                multiple
+                className="hidden"
+                disabled={busy}
+                onChange={(e) => {
+                  onUpload(e.target.files);
+                  e.currentTarget.value = '';
+                }}
+              />
+            </label>
+          </div>
+          <div className="flex flex-wrap items-center gap-3 font-mono text-[10px] text-[#8A837A]">
+            <span className="inline-flex items-center gap-1"><span className="h-1.5 w-1.5 rounded-full bg-[#1A7A52]" /> Live Stake sync</span>
+            <span>·</span>
+            <span>Token is stored locally in this browser</span>
+          </div>
         </div>
       </div>
     </div>
