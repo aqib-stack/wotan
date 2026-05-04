@@ -186,18 +186,36 @@ export class InsightsService {
     ];
   }
 
-  async getBets(filter: BetFilter = 'all') {
-    let bets = await this.allBets();
-    if (filter === 'tilt') bets = bets.filter((b) => b.flag === 'tilt');
-    if (filter === 'win') bets = bets.filter((b) => b.result === 'W');
-    if (filter === 'loss') bets = bets.filter((b) => b.result === 'L');
+  async getBets(filter: BetFilter = 'all', limit = 200) {
+    const user = await this.user();
+    const safeLimit = this.safeLimit(limit, 200, 500);
+    const where: any = { userId: user.id };
 
-    const totalStaked = bets.reduce((s, b) => s + b.stake, 0);
-    const totalReturned = bets.reduce((s, b) => s + this.resultReturn(b), 0);
+    if (filter === 'tilt') where.flag = 'tilt';
+    if (filter === 'win') where.result = 'W';
+    if (filter === 'loss') where.result = 'L';
+
+    const [rows, count, totals] = await this.prisma.$transaction([
+      this.prisma.bet.findMany({
+        where,
+        orderBy: { placedAt: 'desc' },
+        take: safeLimit,
+      }),
+      this.prisma.bet.count({ where }),
+      this.prisma.bet.findMany({
+        where,
+        select: { stake: true, odds: true, result: true },
+      }),
+    ]);
+
+    const totalStaked = totals.reduce((s, b) => s + b.stake, 0);
+    const totalReturned = totals.reduce((s, b) => s + this.resultReturn(b), 0);
 
     return {
-      rows: bets,
-      count: bets.length,
+      rows: rows.reverse(),
+      count,
+      returnedRows: rows.length,
+      limit: safeLimit,
       totalStaked: Number(totalStaked.toFixed(2)),
       totalReturned: Number(totalReturned.toFixed(2)),
     };
@@ -206,19 +224,23 @@ export class InsightsService {
   async getHeatmap() {
     const bets = await this.allBets();
     const days = this.daysForHeatmap(bets);
-    const cells: any[] = [];
+    const grouped = new Map<string, { count: number; tilt: boolean }>();
 
+    for (const bet of bets) {
+      const day = this.dayLabel(bet.placedAt);
+      const hour = bet.placedAt.getHours();
+      const key = `${day}|${hour}`;
+      const current = grouped.get(key) || { count: 0, tilt: false };
+      current.count += 1;
+      current.tilt = current.tilt || bet.flag === 'tilt';
+      grouped.set(key, current);
+    }
+
+    const cells: any[] = [];
     for (const day of days) {
       for (let hour = 0; hour < 24; hour++) {
-        const dayBets = bets.filter(
-          (b) => this.dayLabel(b.placedAt) === day && b.placedAt.getHours() === hour,
-        );
-        cells.push({
-          day,
-          hour,
-          count: dayBets.length,
-          tilt: dayBets.some((b) => b.flag === 'tilt'),
-        });
+        const cell = grouped.get(`${day}|${hour}`) || { count: 0, tilt: false };
+        cells.push({ day, hour, count: cell.count, tilt: cell.tilt });
       }
     }
 
@@ -256,6 +278,8 @@ export class InsightsService {
       (a, b) => a.placedAt.getTime() - b.placedAt.getTime(),
     );
 
+    const createRows: any[] = [];
+
     for (const row of rows) {
       if (
         !row.match ||
@@ -271,25 +295,25 @@ export class InsightsService {
         continue;
       }
 
-      await this.prisma.bet.create({
-        data: {
-          userId: user.id,
-          n: 0,
-          placedAt: row.placedAt,
-          match: row.match,
-          market: row.market,
-          odds: row.odds,
-          stake: row.stake,
-          currency: row.currency,
-          result: row.result,
-          flag: null,
-        },
+      createRows.push({
+        userId: user.id,
+        n: createRows.length + 1,
+        placedAt: row.placedAt,
+        match: row.match,
+        market: row.market,
+        odds: row.odds,
+        stake: row.stake,
+        currency: row.currency,
+        result: row.result,
+        flag: null,
       });
-
-      imported++;
     }
 
-    await this.renumberBets(user.id);
+    if (createRows.length) {
+      await this.prisma.bet.createMany({ data: createRows });
+    }
+
+    imported = createRows.length;
     await this.detectAndStoreTiltFlags(user.id);
 
     return {
@@ -316,6 +340,8 @@ export class InsightsService {
       (a, b) => a.placedAt.getTime() - b.placedAt.getTime(),
     );
 
+    const createRows: any[] = [];
+
     for (const row of rows) {
       if (
         !row.match ||
@@ -331,25 +357,25 @@ export class InsightsService {
         continue;
       }
 
-      await this.prisma.bet.create({
-        data: {
-          userId: user.id,
-          n: 0,
-          placedAt: row.placedAt,
-          match: row.match,
-          market: row.market,
-          odds: row.odds,
-          stake: row.stake,
-          currency: row.currency,
-          result: row.result,
-          flag: null,
-        },
+      createRows.push({
+        userId: user.id,
+        n: createRows.length + 1,
+        placedAt: row.placedAt,
+        match: row.match,
+        market: row.market,
+        odds: row.odds,
+        stake: row.stake,
+        currency: row.currency,
+        result: row.result,
+        flag: null,
       });
-
-      imported++;
     }
 
-    await this.renumberBets(user.id);
+    if (createRows.length) {
+      await this.prisma.bet.createMany({ data: createRows });
+    }
+
+    imported = createRows.length;
     await this.detectAndStoreTiltFlags(user.id);
 
     return {
@@ -506,23 +532,27 @@ export class InsightsService {
     const bets = await this.prisma.bet.findMany({
       where: { userId },
       orderBy: { placedAt: 'asc' },
+      select: { id: true },
     });
 
-    for (let i = 0; i < bets.length; i++) {
-      await this.prisma.bet.update({
-        where: { id: bets[i].id },
-        data: { n: i + 1 },
-      });
-    }
+    const updates = bets.map((bet, index) =>
+      this.prisma.bet.update({
+        where: { id: bet.id },
+        data: { n: index + 1 },
+      }),
+    );
+
+    await this.runInChunks(updates, 100);
   }
 
   private async detectAndStoreTiltFlags(userId: string) {
-    const bets = await this.prisma.bet.findMany({ where: { userId }, orderBy: { placedAt: 'asc' } });
+    const bets = await this.prisma.bet.findMany({
+      where: { userId },
+      orderBy: { placedAt: 'asc' },
+      select: { id: true, placedAt: true, stake: true, result: true },
+    });
 
-    for (const bet of bets) {
-      await this.prisma.bet.update({ where: { id: bet.id }, data: { flag: null } });
-    }
-
+    await this.prisma.bet.updateMany({ where: { userId, flag: 'tilt' }, data: { flag: null } });
     if (bets.length < 10) return;
 
     const flaggedIds = new Set<string>();
@@ -542,25 +572,30 @@ export class InsightsService {
       }
     }
 
-    for (let i = 0; i < bets.length; i++) {
-      const session = [bets[i]];
-      for (let j = i + 1; j < bets.length; j++) {
-        if (bets[j].placedAt.getTime() - bets[i].placedAt.getTime() <= 60 * 60 * 1000) {
-          session.push(bets[j]);
-        }
+    let left = 0;
+    for (let right = 0; right < bets.length; right++) {
+      while (bets[right].placedAt.getTime() - bets[left].placedAt.getTime() > 60 * 60 * 1000) {
+        left++;
       }
+
+      const session = bets.slice(left, right + 1);
+      if (session.length < 4) continue;
 
       const sessionStake = session.reduce((sum, b) => sum + b.stake, 0);
       const sessionLosses = session.filter((b) => b.result === 'L').length;
       const lateSession = session.some((b) => b.placedAt.getHours() >= 22 || b.placedAt.getHours() < 3);
 
-      if (session.length >= 4 && sessionLosses >= 3 && lateSession && sessionStake > 0) {
+      if (sessionLosses >= 3 && lateSession && sessionStake > 0) {
         session.forEach((b) => flaggedIds.add(b.id));
       }
     }
 
-    for (const id of flaggedIds) {
-      await this.prisma.bet.update({ where: { id }, data: { flag: 'tilt' } });
+    const ids = Array.from(flaggedIds);
+    for (let i = 0; i < ids.length; i += 100) {
+      await this.prisma.bet.updateMany({
+        where: { id: { in: ids.slice(i, i + 100) } },
+        data: { flag: 'tilt' },
+      });
     }
   }
 
@@ -1164,6 +1199,18 @@ export class InsightsService {
 
   private stakeMarketLabel(outcome: any) {
     return outcome?.marketName || outcome?.market?.name || (outcome?.marketId ? `Market ${outcome.marketId}` : 'Sportsbook');
+  }
+
+  private safeLimit(value: any, fallback: number, max: number) {
+    const parsed = Number(value);
+    if (!Number.isFinite(parsed) || parsed <= 0) return fallback;
+    return Math.min(Math.floor(parsed), max);
+  }
+
+  private async runInChunks(items: any[], chunkSize: number) {
+    for (let i = 0; i < items.length; i += chunkSize) {
+      await this.prisma.$transaction(items.slice(i, i + chunkSize));
+    }
   }
 
   private clamp(value: number, min: number, max: number) {

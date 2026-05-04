@@ -43,8 +43,9 @@ export class InsightsController {
   @Get('bets')
   bets(
     @Query('filter') filter: 'all' | 'tilt' | 'win' | 'loss' = 'all',
+    @Query('limit') limit?: string,
   ) {
-    return this.insights.getBets(filter);
+    return this.insights.getBets(filter, Number(limit) || 200);
   }
 
   @Post('import/stake-json')
@@ -89,6 +90,6 @@ export class InsightsController {
       );
     }
 
-    return this.insights.importStakeLive(stakeToken, Number(maxBets) || 500);
+    return this.insights.importStakeLive(stakeToken, Number(maxBets) || 200);
   }
 }
