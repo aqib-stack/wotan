@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import { useRouter } from 'next/navigation';
 import { apiGet, apiPostFormData } from '@/lib/api';
 
 type Summary = any;
@@ -19,13 +20,26 @@ const tone: any = {
 const API = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4000';
 
 async function apiPostJson<T>(path: string, body: any): Promise<T> {
+  const token =
+    typeof window !== 'undefined'
+      ? localStorage.getItem('wotan_token')
+      : null;
+
   const res = await fetch(`${API}${path}`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: {
+      'Content-Type': 'application/json',
+      ...(token
+        ? {
+            Authorization: `Bearer ${token}`,
+          }
+        : {}),
+    },
     body: JSON.stringify(body),
   });
 
   let data: any = null;
+
   try {
     data = await res.json();
   } catch {
@@ -63,6 +77,8 @@ function getDisplayCurrency(summary?: any, bets?: any) {
 }
 
 export default function InsightsDashboard() {
+   const router = useRouter();
+  const [currentUser, setCurrentUser] = useState<any>(null);
   const [summary, setSummary] = useState<Summary>();
   const [metrics, setMetrics] = useState<Metric[]>([]);
   const [heat, setHeat] = useState<Heatmap>();
@@ -92,6 +108,11 @@ export default function InsightsDashboard() {
   };
 
   useEffect(() => {
+    const savedUser = window.localStorage.getItem('wotan_user');
+    if (savedUser) {
+      setCurrentUser(JSON.parse(savedUser));
+    }
+
     load();
 
     const savedStakeToken = window.localStorage.getItem('wotanStakeToken');
@@ -255,12 +276,18 @@ export default function InsightsDashboard() {
     }
   }
 
+   function handleLogout() {
+    window.localStorage.removeItem('wotan_token');
+    window.localStorage.removeItem('wotan_user');
+    router.replace('/login');
+  }
+
   if (!summary) return <main className="min-h-screen bg-[#F5F3EE] p-10">Loading Insights...</main>;
 
   return (
     <main className="min-h-screen bg-[#F5F3EE] px-5 py-8 text-[#1A1A1A]">
       <div className="mx-auto max-w-[1280px]">
-        <Header summary={summary} />
+        <Header summary={summary} user={currentUser} onLogout={handleLogout} />
         <StakeUpload
           onUpload={handleStakeUpload}
           onStakeSync={handleStakeLiveSync}
@@ -305,12 +332,43 @@ export default function InsightsDashboard() {
   );
 }
 
-function Header({ summary }: any) {
+function Header({ summary, user, onLogout }: any) {
+  const displayName = user?.fullName || user?.email || 'User';
+
   return (
-    <div className="mb-7">
-      <div className="mb-2 font-mono text-[10px] uppercase tracking-[0.15em] text-[#6B6560]">WOTAN PROJECT · INSIGHTS · FUNCTIONAL DASHBOARD</div>
-      <h1 className="mb-1 text-4xl font-bold tracking-tight">Investor Behaviour Analysis</h1>
-      <p className="font-mono text-[11px] text-[#6B6560]">Sample User · {summary.totalBets} football bets · {summary.period} · {summary.source}</p>
+    <div className="mb-7 flex items-start justify-between gap-6">
+      <div>
+        <div className="mb-2 font-mono text-[10px] uppercase tracking-[0.15em] text-[#6B6560]">
+          WOTAN PROJECT · INSIGHTS · FUNCTIONAL DASHBOARD
+        </div>
+
+        <h1 className="mb-1 text-4xl font-bold tracking-tight">
+          Investor Behaviour Analysis
+        </h1>
+
+        <p className="font-mono text-[11px] text-[#6B6560]">
+          {displayName} · {summary.totalBets} football bets · {summary.period} · {summary.source}
+        </p>
+      </div>
+
+      <div className="flex items-center gap-3 rounded-2xl border border-[#D8D4CC] bg-white/50 px-4 py-3">
+        <div className="text-right">
+          <div className="font-mono text-[9px] uppercase tracking-[0.18em] text-[#8A8178]">
+            Signed in
+          </div>
+
+          <div className="max-w-[180px] truncate text-sm font-semibold text-[#1A1A1A]">
+            {displayName}
+          </div>
+        </div>
+
+        <button
+          onClick={onLogout}
+          className="rounded-xl bg-[#1A1A1A] px-4 py-2 text-sm font-medium text-white"
+        >
+          Logout
+        </button>
+      </div>
     </div>
   );
 }

@@ -7,11 +7,50 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
+enum UserRole {
+  USER
+  ADMIN
+}
+
+enum UserStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  SUSPENDED
+}
+
+enum SubscriptionStatus {
+  NONE
+  ACTIVE
+  EXPIRED
+  CANCELLED
+}
+
 model User {
-  id        String   @id @default(cuid())
-  name      String
-  createdAt DateTime @default(now())
-  bets      Bet[]
+  id                 String             @id @default(cuid())
+  fullName           String
+  email              String             @unique
+  passwordHash       String
+  country            String?
+  preferredCurrency  String             @default("PKR")
+  stakeUsername      String?
+  phone              String?
+  experienceLevel    String?
+
+  role               UserRole           @default(USER)
+  status             UserStatus         @default(PENDING)
+  subscriptionStatus SubscriptionStatus @default(NONE)
+
+  emailVerified      Boolean            @default(false)
+
+  createdAt          DateTime           @default(now())
+  updatedAt          DateTime           @updatedAt
+
+  bets               Bet[]
+  connections        BookmakerConnection[]
+
+  @@index([email])
+  @@index([status])
 }
 
 model BookmakerConnection {
@@ -20,6 +59,10 @@ model BookmakerConnection {
   platform  String
   tokenHash String?
   createdAt DateTime @default(now())
+
+  user      User     @relation(fields: [userId], references: [id])
+
+  @@index([userId])
 }
 
 model Bet {
@@ -35,6 +78,7 @@ model Bet {
   result    String
   flag      String?
   createdAt DateTime @default(now())
+
   user      User     @relation(fields: [userId], references: [id])
 
   @@index([userId, placedAt])

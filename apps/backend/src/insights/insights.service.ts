@@ -41,16 +41,21 @@ function emptyStakeMetadata(): StakeMetadata {
 export class InsightsService {
   constructor(private prisma: PrismaService) {}
 
-  private async user() {
-    let user = await this.prisma.user.findFirst({ where: { name: 'Sample User' } });
-    if (!user) user = await this.prisma.user.create({ data: { name: 'Sample User' } });
+  private async user(userId: string) {
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+    });
+
+    if (!user) {
+      throw new BadRequestException('User not found');
+    }
+
     return user;
   }
 
-  private async allBets() {
-    const user = await this.user();
+  private async allBets(userId: string) {
     return this.prisma.bet.findMany({
-      where: { userId: user.id },
+      where: { userId },
       orderBy: { placedAt: 'asc' },
     });
   }
@@ -84,8 +89,8 @@ export class InsightsService {
     return 'High';
   }
 
-  async getSummary() {
-    const bets = await this.allBets();
+  async getSummary(userId: string) {
+    const bets = await this.allBets(userId);
     const totalBets = bets.length;
     const totalStaked = bets.reduce((s, b) => s + b.stake, 0);
     const totalReturned = bets.reduce((s, b) => s + this.resultReturn(b), 0);
@@ -131,8 +136,8 @@ export class InsightsService {
     };
   }
 
-  async getMetrics() {
-    const bets = await this.allBets();
+  async getMetrics(userId: string) {
+    const bets = await this.allBets(userId);
     const frequency = this.frequencyStats(bets);
     const streak = this.streakStats(bets);
     const tilt = this.tiltStats(bets);
@@ -186,10 +191,9 @@ export class InsightsService {
     ];
   }
 
-  async getBets(filter: BetFilter = 'all', limit = 200) {
-    const user = await this.user();
+  async getBets(userId: string, filter: BetFilter = 'all', limit = 200) {
     const safeLimit = this.safeLimit(limit, 200, 500);
-    const where: any = { userId: user.id };
+    const where: any = { userId };
 
     if (filter === 'tilt') where.flag = 'tilt';
     if (filter === 'win') where.result = 'W';
@@ -221,8 +225,8 @@ export class InsightsService {
     };
   }
 
-  async getHeatmap() {
-    const bets = await this.allBets();
+  async getHeatmap(userId: string) {
+    const bets = await this.allBets(userId);
     const days = this.daysForHeatmap(bets);
     const grouped = new Map<string, { count: number; tilt: boolean }>();
 
@@ -247,26 +251,26 @@ export class InsightsService {
     return { days, hours: Array.from({ length: 24 }, (_, i) => i), cells };
   }
 
-  async getStreak() {
-    const bets = await this.allBets();
+  async getStreak(userId: string) {
+    const bets = await this.allBets(userId);
     return {
       rows: bets.map((b) => ({ n: b.n, stake: b.stake, result: b.result, flag: b.flag })),
       stats: this.streakStats(bets),
     };
   }
 
-  async getTiltEvents() {
-    const bets = await this.allBets();
+  async getTiltEvents(userId: string) {
+    const bets = await this.allBets(userId);
     return this.buildTiltEvents(bets);
   }
 
-  async importStakeLive(stakeToken: string, maxBets = 500) {
+  async importStakeLive(userId: string, stakeToken: string, maxBets = 500) {
     const token = stakeToken?.trim();
     if (!token) {
       throw new BadRequestException('Stake x-access-token is required to fetch live Stake bet history.');
     }
 
-    const user = await this.user();
+    const user = await this.user(userId);
     const entries = await this.fetchStakeSportBetEntries(token, maxBets);
 
     await this.prisma.bet.deleteMany({ where: { userId: user.id } });
@@ -325,12 +329,12 @@ export class InsightsService {
     };
   }
 
-  async importStakeBrowserEntries(entries: any[]) {
+  async importStakeBrowserEntries(userId: string, entries: any[]) {
     if (!Array.isArray(entries)) {
       throw new BadRequestException('Stake browser sync payload must include an entries array.');
     }
 
-    const user = await this.user();
+    const user = await this.user(userId);
     await this.prisma.bet.deleteMany({ where: { userId: user.id } });
 
     let imported = 0;
@@ -386,8 +390,8 @@ export class InsightsService {
       message: `Fetched ${entries.length} Stake bet${entries.length === 1 ? '' : 's'} from browser and imported ${imported}. Skipped ${skipped} incomplete/unsupported record${skipped === 1 ? '' : 's'}.`,
     };
   }
-  async importStakeJsonFiles(files: any[], stakeToken?: string) {
-    const user = await this.user();
+  async importStakeJsonFiles(userId: string, files: any[], stakeToken?: string) {
+    const user = await this.user(userId);
 
     const rawFiles = files.map((file) => file.buffer.toString('utf8'));
     const fixtureIds = this.extractStakeFixtureIds(rawFiles);
@@ -405,7 +409,7 @@ export class InsightsService {
     let skipped = 0;
 
     for (const raw of rawFiles) {
-      const result = await this.importStakeJson(raw, false, metadata);
+      const result = await this.importStakeJson(userId, raw, false, metadata);
       imported += result.imported || 0;
       skipped += result.skipped || 0;
     }
@@ -429,7 +433,7 @@ export class InsightsService {
     };
   }
 
-  async importStakeJson(rawJson: string, clearExisting = true, metadata: StakeMetadata = emptyStakeMetadata()) {
+  async importStakeJson(userId: string, rawJson: string, clearExisting = true, metadata: StakeMetadata = emptyStakeMetadata()) {
     let records: any[];
 
     try {
@@ -442,7 +446,7 @@ export class InsightsService {
       throw new BadRequestException('Stake archive JSON must be an array.');
     }
 
-    const user = await this.user();
+    const user = await this.user(userId);
 
     if (clearExisting) {
       await this.prisma.bet.deleteMany({ where: { userId: user.id } });

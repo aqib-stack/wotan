@@ -57,7 +57,16 @@ const raw = [
 async function main() {
   await prisma.bet.deleteMany();
   await prisma.user.deleteMany();
-  const user = await prisma.user.create({ data: { name: 'Sample User' } });
+  const user = await prisma.user.create({
+  data: {
+    fullName: 'Sample User',
+    email: 'sample@wotan.local',
+    passwordHash: 'sample-password-placeholder',
+    status: 'APPROVED',
+    subscriptionStatus: 'ACTIVE',
+    emailVerified: true,
+  },
+});
   await prisma.bookmakerConnection.create({ data: { userId: user.id, platform: 'Stake', tokenHash: 'demo-token-hash' } });
   await prisma.bet.createMany({
     data: raw.map(([n, placedAt, match, market, odds, stake, result, flag]) => ({

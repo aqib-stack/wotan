@@ -8,16 +8,23 @@ async function main() {
   const raw = fs.readFileSync(filePath, "utf8");
   const records = JSON.parse(raw);
 
-  let user = await prisma.user.findFirst({
-  where: { name: "Sample User" },
+let user = await prisma.user.findFirst({
+  where: {
+    email: 'sample@wotan.local',
+  },
 });
 
 if (!user) {
   user = await prisma.user.create({
-    data: {
-      name: "Sample User",
-    },
-  });
+  data: {
+    fullName: 'Sample User',
+    email: 'sample@wotan.local',
+    passwordHash: 'sample-password-placeholder',
+    status: 'APPROVED',
+    subscriptionStatus: 'ACTIVE',
+    emailVerified: true,
+  },
+});
 }
 
   await prisma.bet.deleteMany();
